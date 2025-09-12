@@ -58,6 +58,21 @@ Run the cleanup (will delete):
 .\scripts\cleanup-logs.ps1 -DaysToKeep 3
 ```
 
+Logs are written into dated folders under `logs/YYYY/MM/DD/` to keep files small.
+To remove old logs (default: keep 3 days), there's a cleanup script under `scripts/cleanup-logs.ps1`.
+
+Preview what would be deleted (safe):
+
+```powershell
+.\	ools\cleanup-logs.ps1 -DaysToKeep 3 -WhatIf
+```
+
+Run the cleanup (will delete):
+
+```powershell
+.\scripts\cleanup-logs.ps1 -DaysToKeep 3
+```
+
 ## Auto-start at logon
 
 ```powershell
