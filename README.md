@@ -26,8 +26,8 @@ version control or recreate them using the official DepthAI examples under the
 
 ```powershell
 # From this folder
-py -3 -m venv .\\venv
-. .\\venv\\Scripts\\Activate.ps1
+py -3 -m venv .\venv
+. .\venv\Scripts\Activate.ps1
 pip install -U pip
 pip install -r requirements.txt
 ```
@@ -36,23 +36,65 @@ pip install -r requirements.txt
 
 ```powershell
 # Start tray app (default 1080p@30 NV12)
-.\\start-uvc.ps1
+.\start-uvc.ps1
 
 # Or directly
-python .\\oak_uvc.py --width 1920 --height 1080 --fps 30 --format NV12
+python .\oak_uvc.py --width 1920 --height 1080 --fps 30 --format NV12
 ```
 
-Right-click the tray icon to Exit. Logs: `oak_uvc.log` and `start-uvc.log`.
+Right-click the tray icon to Exit. Logs are written into dated folders under `logs/YYYY/MM/DD/` to keep files small.
 
-Logs are written into dated folders under `logs/YYYY/MM/DD/` to keep files small.
 To remove old logs (default: keep 3 days), there's a cleanup script under `scripts/cleanup-logs.ps1`.
 
 Preview what would be deleted (safe):
+
 ```powershell
 .\scripts\cleanup-logs.ps1 -DaysToKeep 3 -WhatIf
 ```
 
 Run the cleanup (will delete):
+
 ```powershell
 .\scripts\cleanup-logs.ps1 -DaysToKeep 3
 ```
+
+## Auto-start at logon
+
+```powershell
+# Install startup task (per-user)
+.\install-startup-task.ps1
+
+# Remove startup task
+.\install-startup-task.ps1 -Uninstall
+```
+
+## Troubleshooting
+
+### Device Not Found / Failed to Boot
+
+- ✅ **First**: Install WinUSB drivers using Zadig (see above)
+- Try different USB ports (preferably USB 3.0)
+- Try different USB cables
+- Power cycle the OAK device
+- Check Windows Device Manager for driver issues
+
+### Tray Shows Red Icon
+
+- Check `oak_uvc.log` for detailed error messages
+- Look for Windows toast notifications
+- Try restarting the application
+
+### Format Issues
+
+- Format `NV12` is broadly compatible
+- If your app prefers MJPEG, try `--format MJPEG`
+- Autofocus/exposure remain automatic by default
+
+## Technical Details
+
+- Uses official DepthAI UVC pipeline approach
+- Supports 1080p@30 and 4K@30 (with downscaling)
+- NV12 and MJPEG output formats
+- Auto-reconnection on device disconnect
+- Windows toast notifications for status updates
+- Comprehensive logging to `oak_uvc.log`

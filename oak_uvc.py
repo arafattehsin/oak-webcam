@@ -172,3 +172,176 @@ def device_context(pipeline: dai.Pipeline):
         yield device
     except RuntimeError as e:
         error_msg = str(e)
+        if "Failed to boot device" in error_msg:
+            log.error("Device boot failed - this usually indicates driver issues")
+            log.error("RECOMMENDED SOLUTION: Install WinUSB drivers using Zadig")
+            log.error("1. Download Zadig from https://zadig.akeo.ie/")
+            log.error("2. Run as Administrator")
+            log.error("3. Select your OAK device (may show as 'Movidius')")
+            log.error("4. Replace driver with WinUSB")
+            log.error("5. Reboot and try again")
+            raise RuntimeError("Device driver issue detected. Please install WinUSB drivers using Zadig.") from e
+        elif "X_LINK_UNBOOTED" in error_msg:
+            log.error("Device is in unbooted state - requires proper drivers")
+            log.error("This is a common Windows issue that WinUSB drivers fix")
+            raise RuntimeError("Device in unbooted state. WinUSB drivers required.") from e
+        else:
+            # Re-raise other runtime errors
+            raise
+    except Exception as e:
+        log.error(f"Unexpected error during device initialization: {e}")
+        raise
+    finally:
+        if device is not None:
+            try:
+                device.close()
+            except Exception:
+                pass
+
+# ------------- Runner -------------
+
+stop_event = threading.Event()
+
+def run_uvc(width: int, height: int, fps: int, fmt: str, retry_delay: float = 2.0):
+    """
+    Main UVC runner using official DepthAI demo approach
+    """
+    consecutive_failures = 0
+    max_consecutive_failures = 3
+
+    while not stop_event.is_set():
+        try:
+            log.info(f"Starting UVC: {width}x{height}@{fps} {fmt}")
+            set_tray_icon(ICON_WARN, "OAK UVC (starting)")
+            pipeline = make_pipeline(width, height, fps, fmt)
+            with device_context(pipeline):
+                log.info("Device started successfully! Keep this app running to maintain UVC.")
+                set_tray_icon(ICON_OK, "OAK UVC (running)")
+                tray_notify("OAK UVC", f"Webcam is running at {width}x{height}@{fps}.")
+                consecutive_failures = 0  # Reset failure count on success
+                while not stop_event.is_set():
+                    time.sleep(0.2)
+        except RuntimeError as ex:
+            error_msg = str(ex)
+            if "WinUSB drivers" in error_msg or "driver issue" in error_msg:
+                # Driver-related error - show persistent notification
+                log.error("Driver issue detected - providing user guidance")
+                set_tray_icon(ICON_ERR, "OAK UVC (driver issue)")
+                tray_notify("OAK UVC - Driver Issue",
+                           "WinUSB drivers required. Check logs for Zadig instructions.")
+                # Don't retry automatically for driver issues
+                stop_event.wait(300)  # Wait 5 minutes before next attempt
+            else:
+                # Other runtime errors
+                consecutive_failures += 1
+                log.exception(f"UVC runtime error (attempt {consecutive_failures})")
+                set_tray_icon(ICON_ERR, "OAK UVC (error)")
+                tray_notify("OAK UVC error", error_msg[:200])
+
+                if consecutive_failures >= max_consecutive_failures:
+                    log.error(f"Too many consecutive failures ({consecutive_failures}). Stopping automatic retries.")
+                    tray_notify("OAK UVC", "Stopped due to repeated failures. Check device connection.")
+                    break
+
+                # Retry soon unless stopping
+                if stop_event.wait(retry_delay):
+                    break
+        except KeyboardInterrupt:
+            break
+        except Exception as ex:
+            consecutive_failures += 1
+            log.exception(f"Unexpected UVC error (attempt {consecutive_failures})")
+            set_tray_icon(ICON_ERR, "OAK UVC (error)")
+            tray_notify("OAK UVC error", str(ex)[:200])
+
+            if consecutive_failures >= max_consecutive_failures:
+                log.error(f"Too many consecutive failures ({consecutive_failures}). Stopping.")
+                break
+
+            # Retry soon unless stopping
+            if stop_event.wait(retry_delay):
+                break
+
+    log.info("UVC loop exiting")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--width", type=int, default=DEFAULT_W)
+    parser.add_argument("--height", type=int, default=DEFAULT_H)
+    parser.add_argument("--fps", type=int, default=DEFAULT_FPS)
+    parser.add_argument("--format", choices=["NV12", "MJPEG"], default=DEFAULT_FMT)
+    parser.add_argument("--no-tray", action="store_true", help="Run headless without system tray (for debugging)")
+    args = parser.parse_args()
+
+    # Tray menu actions
+    def on_exit(icon, item):
+        stop_event.set()
+        icon.stop()
+
+    global tray
+    if not args.no_tray:
+        tray = pystray.Icon(
+            name="oak_uvc",
+            icon=ICON_WARN,
+            title="OAK UVC",
+            menu=pystray.Menu(pystray.MenuItem("Exit", on_exit)),
+        )
+
+        # Worker thread when tray is enabled
+        t = threading.Thread(target=run_uvc, args=(args.width, args.height, args.fps, args.format), daemon=True)
+        t.start()
+
+        # Signal handlers
+        def handle_sig(signum, frame):
+            stop_event.set()
+            try:
+                tray.stop()
+            except Exception:
+                pass
+
+        for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
+            try:
+                signal.signal(s, handle_sig)
+            except Exception:
+                pass
+
+        # Run tray loop (blocking)
+        try:
+            tray.run()
+        finally:
+            stop_event.set()
+            t.join(timeout=5)
+            log.info("Tray app closed.")
+    else:
+        # Headless mode: run UVC loop in current thread (useful for debugging)
+        try:
+            run_uvc(args.width, args.height, args.fps, args.format)
+        finally:
+            stop_event.set()
+            log.info("Headless run completed.")
+    def handle_sig(signum, frame):
+        stop_event.set()
+        try:
+            tray.stop()
+        except Exception:
+            pass
+
+    for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
+        try:
+            signal.signal(s, handle_sig)
+        except Exception:
+            pass
+
+    # Run tray loop (blocking)
+    try:
+        tray.run()
+    finally:
+        stop_event.set()
+        t.join(timeout=5)
+        log.info("Tray app closed.")
+
+
+if __name__ == "__main__":
+    main()
+
