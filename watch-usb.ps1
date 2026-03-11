@@ -108,10 +108,10 @@ $ErrorActionPreference = 'Continue'
 try {
     while ($true) {
         try {
-            # Check for arrival events
-            $evt = Get-Event -SourceIdentifier 'OAK_USB_Arrival' -ErrorAction SilentlyContinue
-            if ($evt) {
-                Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
+            # Check for arrival events (may return multiple; drain them all)
+            $events = @(Get-Event -SourceIdentifier 'OAK_USB_Arrival' -ErrorAction SilentlyContinue)
+            if ($events.Count -gt 0) {
+                $events | ForEach-Object { Remove-Event -EventIdentifier $_.EventIdentifier -ErrorAction SilentlyContinue }
                 $nowTs = Get-Date
                 if (($nowTs - $lastArrival).TotalSeconds -ge $DebounceSeconds) {
                     $lastArrival = $nowTs
@@ -133,10 +133,10 @@ try {
                 }
             }
 
-            # Check for removal events
-            $evt = Get-Event -SourceIdentifier 'OAK_USB_Removal' -ErrorAction SilentlyContinue
-            if ($evt) {
-                Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
+            # Check for removal events (may return multiple; drain them all)
+            $events = @(Get-Event -SourceIdentifier 'OAK_USB_Removal' -ErrorAction SilentlyContinue)
+            if ($events.Count -gt 0) {
+                $events | ForEach-Object { Remove-Event -EventIdentifier $_.EventIdentifier -ErrorAction SilentlyContinue }
                 $nowTs = Get-Date
 
                 # Ignore disconnects within the grace period after a UVC start.
