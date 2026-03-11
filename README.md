@@ -73,6 +73,28 @@ Run the cleanup (will delete):
 .\scripts\cleanup-logs.ps1 -DaysToKeep 3
 ```
 
+## USB hotplug watcher
+
+Automatically starts the UVC app when the OAK camera is plugged in and stops it
+when the camera is removed. Uses WMI events to detect Luxonis/Movidius devices
+(USB VID `03E7`).
+
+```powershell
+# Run interactively
+.\watch-usb.ps1
+
+# Custom poll interval and debounce
+.\watch-usb.ps1 -PollInterval 3 -DebounceSeconds 10
+```
+
+Logs are written to `logs/YYYY/MM/DD/watch-usb.log`.
+
+To have the watcher run automatically at logon, install it as a scheduled task:
+
+```powershell
+.\install-startup-task.ps1 -TaskName OAK-USB-Watcher -Script watch-usb.ps1
+```
+
 ## Auto-start at logon
 
 ```powershell
