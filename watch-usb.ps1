@@ -23,7 +23,10 @@
 #>
 param(
     [int]$PollInterval = 2,
-    [int]$DebounceSeconds = 5
+    [int]$DebounceSeconds = 5,
+    # Grace period after starting UVC to ignore disconnect events caused by
+    # the device re-enumerating on USB when entering UVC mode.
+    [int]$StartGraceSeconds = 15
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +57,9 @@ if (!(Test-Path $stopScript))  { throw "stop-uvc.ps1 not found at $stopScript" }
 # --- Debounce state ---------------------------------------------------------
 $lastArrival = [datetime]::MinValue
 $lastRemoval = [datetime]::MinValue
+# Tracks last time UVC was started so we can ignore the USB re-enumeration
+# disconnect that DepthAI triggers when entering UVC mode.
+$lastUvcStart = [datetime]::MinValue
 
 # --- Helper: check if OAK device is currently connected ---------------------
 function Test-OakDevice {
@@ -87,60 +93,76 @@ if (Test-OakDevice) {
     if (!(Test-UvcRunning)) {
         Write-Log "OAK device already connected but UVC not running — starting."
         & $startScript
+        $lastUvcStart = Get-Date
     } else {
         Write-Log "OAK device already connected and UVC running."
+        $lastUvcStart = Get-Date
     }
 } else {
     Write-Log "OAK device not detected at startup."
 }
 
 # --- Event loop -------------------------------------------------------------
+# Use Continue inside the loop so transient errors don't kill the watcher.
+$ErrorActionPreference = 'Continue'
 try {
     while ($true) {
-        # Check for arrival events
-        $evt = Get-Event -SourceIdentifier 'OAK_USB_Arrival' -ErrorAction SilentlyContinue
-        if ($evt) {
-            Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
-            $nowTs = Get-Date
-            if (($nowTs - $lastArrival).TotalSeconds -ge $DebounceSeconds) {
-                $lastArrival = $nowTs
-                Write-Log "OAK device CONNECTED."
-                # Small delay to let the device enumerate fully
-                Start-Sleep -Seconds 2
-                if (!(Test-UvcRunning)) {
-                    Write-Log "Starting UVC via start-uvc.ps1 ..."
-                    try {
-                        & $startScript
-                        Write-Log "start-uvc.ps1 completed."
-                    } catch {
-                        Write-Log "ERROR running start-uvc.ps1: $_"
+        try {
+            # Check for arrival events
+            $evt = Get-Event -SourceIdentifier 'OAK_USB_Arrival' -ErrorAction SilentlyContinue
+            if ($evt) {
+                Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
+                $nowTs = Get-Date
+                if (($nowTs - $lastArrival).TotalSeconds -ge $DebounceSeconds) {
+                    $lastArrival = $nowTs
+                    Write-Log "OAK device CONNECTED."
+                    # Small delay to let the device enumerate fully
+                    Start-Sleep -Seconds 2
+                    if (!(Test-UvcRunning)) {
+                        Write-Log "Starting UVC via start-uvc.ps1 ..."
+                        try {
+                            & $startScript
+                            $lastUvcStart = Get-Date
+                            Write-Log "start-uvc.ps1 completed."
+                        } catch {
+                            Write-Log "ERROR running start-uvc.ps1: $_"
+                        }
+                    } else {
+                        Write-Log "UVC already running — skipping start."
                     }
-                } else {
-                    Write-Log "UVC already running — skipping start."
                 }
             }
-        }
 
-        # Check for removal events
-        $evt = Get-Event -SourceIdentifier 'OAK_USB_Removal' -ErrorAction SilentlyContinue
-        if ($evt) {
-            Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
-            $nowTs = Get-Date
-            if (($nowTs - $lastRemoval).TotalSeconds -ge $DebounceSeconds) {
-                $lastRemoval = $nowTs
-                Write-Log "OAK device DISCONNECTED."
-                if (Test-UvcRunning) {
-                    Write-Log "Stopping UVC via stop-uvc.ps1 ..."
-                    try {
-                        & $stopScript
-                        Write-Log "stop-uvc.ps1 completed."
-                    } catch {
-                        Write-Log "ERROR running stop-uvc.ps1: $_"
+            # Check for removal events
+            $evt = Get-Event -SourceIdentifier 'OAK_USB_Removal' -ErrorAction SilentlyContinue
+            if ($evt) {
+                Remove-Event -EventIdentifier $evt.EventIdentifier -ErrorAction SilentlyContinue
+                $nowTs = Get-Date
+
+                # Ignore disconnects within the grace period after a UVC start.
+                # DepthAI re-enumerates the device when entering UVC mode,
+                # which causes a spurious removal event.
+                $sinceStart = ($nowTs - $lastUvcStart).TotalSeconds
+                if ($sinceStart -lt $StartGraceSeconds) {
+                    Write-Log "Ignoring disconnect (within ${StartGraceSeconds}s grace period after UVC start, elapsed ${sinceStart}s)."
+                } elseif (($nowTs - $lastRemoval).TotalSeconds -ge $DebounceSeconds) {
+                    $lastRemoval = $nowTs
+                    Write-Log "OAK device DISCONNECTED."
+                    if (Test-UvcRunning) {
+                        Write-Log "Stopping UVC via stop-uvc.ps1 ..."
+                        try {
+                            & $stopScript
+                            Write-Log "stop-uvc.ps1 completed."
+                        } catch {
+                            Write-Log "ERROR running stop-uvc.ps1: $_"
+                        }
+                    } else {
+                        Write-Log "UVC not running — nothing to stop."
                     }
-                } else {
-                    Write-Log "UVC not running — nothing to stop."
                 }
             }
+        } catch {
+            Write-Log "ERROR in event loop iteration: $_"
         }
 
         Start-Sleep -Milliseconds 500
