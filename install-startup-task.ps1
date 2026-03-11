@@ -8,10 +8,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ps = (Get-Command pwsh).Source
 $targetScript = Join-Path $here $Script
+$vbsLauncher = Join-Path $here 'scripts\launch-hidden.vbs'
 
 if (!(Test-Path $targetScript)) { throw "Script not found: $targetScript" }
+if (!(Test-Path $vbsLauncher)) { throw "VBS launcher not found: $vbsLauncher" }
 
 if ($Uninstall) {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
@@ -24,8 +25,11 @@ if ($Uninstall) {
     exit 0
 }
 
-# Create scheduled task trigger
-$action = New-ScheduledTaskAction -Execute $ps -Argument "-NoProfile -WindowStyle Hidden -File `"$targetScript`""
+# Use wscript.exe + VBS launcher to run PowerShell with no visible window.
+# Task Scheduler + pwsh -WindowStyle Hidden still flashes a console host window;
+# the VBS wrapper avoids that entirely.
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$action = New-ScheduledTaskAction -Execute $wscript -Argument "`"$vbsLauncher`" `"$targetScript`""
 if ($Mode -eq 'Startup') {
     $trigger = New-ScheduledTaskTrigger -AtStartup
 }
