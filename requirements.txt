@@ -5,7 +5,6 @@ numpy>=2.0.0
 # System tray and notifications
 pystray>=0.19.5
 Pillow>=10.0.0
-win10toast>=0.9
-pywin32>=306
+winotify>=1.1
 
 # (No winrt dependency needed; win10toast is sufficient)

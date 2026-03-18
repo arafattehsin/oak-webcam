@@ -28,10 +28,10 @@ import depthai as dai
 from PIL import Image, ImageDraw
 import pystray
 try:
-    from win10toast import ToastNotifier
-    TOAST = ToastNotifier()
+    from winotify import Notification
+    _WINOTIFY_OK = True
 except Exception:
-    TOAST = None
+    _WINOTIFY_OK = False
 
 DEFAULT_W = 1920
 DEFAULT_H = 1080
@@ -43,10 +43,8 @@ def _dated_log_path(base_name: str) -> str:
     """Return a log path under logs/YYYY/MM/DD/<base_name> and ensure the directories exist."""
     now = time.localtime()
     year = time.strftime("%Y", now)
-    month = time.strftime("m", now)
-    day = time.strftime("%d", now)
-    # Use zero-padded month/day via strftime: %m gives 01-12
     month = time.strftime("%m", now)
+    day = time.strftime("%d", now)
     dir_path = os.path.join(BASE_LOG_DIR, year, month, day)
     try:
         os.makedirs(dir_path, exist_ok=True)
@@ -86,24 +84,21 @@ ICON_ERR = make_icon("#F44336")
 tray = None
 tray_state_lock = threading.Lock()
 
-_toast_enabled = True
-
-
-def tray_notify(title: str, msg: str, duration: int = 5):
-    global _toast_enabled
+def tray_notify(title: str, msg: str):
     # Allow disabling toasts via env var for troubleshooting
     if os.environ.get("OAK_DISABLE_TOAST", "0") == "1":
         return
 
-    if TOAST is not None and _toast_enabled:
+    if _WINOTIFY_OK:
         try:
-            # Use non-threaded toast to avoid Win32 callback issues with pystray
-            # (some Windows callbacks can return None and raise TypeError in the
-            # event loop). If this still fails, disable toasts.
-            TOAST.show_toast(title, msg, duration=duration, threaded=False)
+            toast = Notification(
+                app_id="OAK UVC",
+                title=title,
+                msg=msg,
+            )
+            toast.show()
         except Exception:
-            # Disable further toasts to avoid noisy Win32 callback errors
-            _toast_enabled = False
+            pass
 
 
 def set_tray_icon(img: Image.Image, title: str = "OAK UVC"):
@@ -320,26 +315,6 @@ def main():
         finally:
             stop_event.set()
             log.info("Headless run completed.")
-    def handle_sig(signum, frame):
-        stop_event.set()
-        try:
-            tray.stop()
-        except Exception:
-            pass
-
-    for s in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", signal.SIGTERM)):
-        try:
-            signal.signal(s, handle_sig)
-        except Exception:
-            pass
-
-    # Run tray loop (blocking)
-    try:
-        tray.run()
-    finally:
-        stop_event.set()
-        t.join(timeout=5)
-        log.info("Tray app closed.")
 
 
 if __name__ == "__main__":
